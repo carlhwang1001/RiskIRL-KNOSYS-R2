@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>EM 派工實驗室｜風險敏感逆強化學習互動示範</title>
+<meta name="description" content="用 10 條不標示身分的虛擬派工軌跡，在瀏覽器裡一輪一輪計算風險敏感逆強化學習的變分 EM：均值-變異數 Q、選擇機率、軌跡似然、後驗把握度表、逐軌跡修正建議、梯度合併與 Phase B。">
+<link rel="canonical" href="https://stsp-data.com/ai-design/Risk-Sensitive-IRL/">
+<link rel="alternate" hreflang="zh-Hant" href="https://stsp-data.com/ai-design/Risk-Sensitive-IRL/">
+<link rel="alternate" hreflang="en" href="https://stsp-data.com/ai-design/Risk-Sensitive-IRL/index_en.html">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://stsp-data.com/ai-design/Risk-Sensitive-IRL/">
+<meta property="og:title" content="EM 派工實驗室｜風險敏感逆強化學習互動示範">
+<meta property="og:description" content="在瀏覽器裡逐輪計算風險敏感逆強化學習的變分 EM：從不標示身分的示範軌跡，同時學出共同獎勵與每條軌跡的風險係數。">
+<meta property="og:locale" content="zh_TW">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="langbar" aria-label="語言"><a href="index.html" aria-current="page">中文</a><a href="index_en.html" lang="en">English</a></nav>
+<header class="top">
+  <h1>EM 派工實驗室</h1>
+  <p class="lede">10 位派工員各做 15 次派工，紀錄不標示是誰派的。每一輪先依目前的共同目標 θ 替每條軌跡填「候選 β 把握度表」（E 步），再用整張表修正 θ（M 步）。下方每張卡片對應方法的一個計算步驟，數字都是瀏覽器現場算的。</p>
+</header>
+
+<div class="bar" role="toolbar" aria-label="迭代控制">
+  <span class="iter">第 <b id="iterNo">0</b> 輪　θ = <span id="thNow" class="mono"></span>　ELBO = <span id="elboNow" class="mono"></span></span>
+  <button id="btnStep" class="primary">下一輪</button>
+  <button id="btnPlay" aria-pressed="false">自動播放</button>
+  <button id="btnConv">跑到收斂</button>
+  <button id="btnReset">重來</button>
+  <button id="btnReveal" aria-pressed="false">揭曉答案</button>
+</div>
+
+<section class="card" id="setup">
+  <h2>設定<span class="eqno">可調整</span></h2>
+  <p class="note">情境 A、B、C 的差別是「成本最低」那位工程師的技能夠不夠。兩個動作：<span style="color:var(--risky);font-weight:700">成</span>＝派成本最低的人（便宜，可能要重工），<span style="color:var(--safe);font-weight:700">技</span>＝派技能足夠的人（較貴，95% 一次修好）。每一步的獎勵 R = θ₁ × 派工成本 ＋ θ₂ × 重工（重工為 1 或 0）。</p>
+  <div class="scroll"><table id="envTable"></table></div>
+  <div class="params" style="margin-top:14px">
+    <label for="th1">起點 θ₁（派工成本權重）<span class="val" id="th1v"></span><input id="th1" type="range" min="-4" max="0" step="0.1" value="-0.5"></label>
+    <label for="th2">起點 θ₂（重工權重）<span class="val" id="th2v"></span><input id="th2" type="range" min="-5" max="0" step="0.1" value="-0.5"></label>
+    <label for="alpha">更新步長 α<span class="val" id="alphav"></span><input id="alpha" type="range" min="0.05" max="1.2" step="0.05" value="0.4"></label>
+    <label for="lam">理性常數 λ（固定）<span class="val" id="lamv"></span><input id="lam" type="range" min="1" max="6" step="0.5" value="3"></label>
+    <label for="gam">折扣 γ<span class="val" id="gamv"></span><input id="gam" type="range" min="0.5" max="0.95" step="0.05" value="0.9"></label>
+    <label for="kSel">候選 β 格數<select id="kSel"><option value="7">7 格（手算用）</option><option value="64" selected>64 格（論文設定）</option></select></label>
+    <label for="opSel">合併方式<select id="opSel"><option value="mean">平均</option><option value="pcgrad">PCGrad</option><option value="cagrad">CAGrad</option></select></label>
+    <label for="bhatOnly">M 步的做法<select id="bhatOnly"><option value="0">用整張把握度表（正確）</option><option value="1">只用 β̂（常見誤解）</option></select></label>
+  </div>
+</section>
+
+<section class="card" id="dataCard">
+  <h2>資料：10 條不標示身分的軌跡<span class="eqno">τ₁ … τ₁₀</span></h2>
+  <p class="note">每格是一次派工：字母是情境，顏色是選擇。點格子可以改掉那一步的選擇；點左邊的編號選定一條軌跡，下方的明細會跟著換。改資料或參數後會自動回到第 0 輪。</p>
+  <div class="legend"><span><span class="sw" style="background:var(--risky)"></span>成本最低</span><span><span class="sw" style="background:var(--safe)"></span>技能優先</span><span class="reveal" id="revealNote" hidden>右欄為揭曉的真實 β</span></div>
+  <div id="trajGrid" class="traj"></div>
+  <div class="params" style="margin-top:12px">
+    <label for="seed">重新產生資料的亂數種子<input id="seed" type="number" min="1" max="99999" value="12"></label>
+    <label for="steps">每條軌跡步數<input id="steps" type="number" min="5" max="40" value="15"></label>
+    <span style="display:flex;gap:8px;align-items:end;flex-wrap:wrap"><button id="btnGen">重新產生</button><button id="btnDefault">回到範例資料</button></span>
+  </div>
+</section>
+
+<section class="card" id="card-q">
+  <h2>每個動作的評價<span class="eqno">均值-變異數 Q</span></h2>
+  <div class="formula">Q_β(s,a) = E[R] − ½(β − 1)·Var[R]/R₀ + γ·E[V(s′)]　　R₀ = 1<br>E[R] = θᵀφ(s,a) = θ₁·成本 + θ₂·(1 − 修好率)，φ(s,a) = (成本, 1 − 修好率)　　Var[R] = θ₂²·修好率·(1 − 修好率)</div>
+  <p class="note">φ(s,a) 是這個派工的特徵期望值（成本、重工機率），E[R] 就是 θ 和 φ 的內積，與 Phase B 的 r̂ = θ̂ᵀφ 是同一個公式。變異數懲罰只作用在這一步的獎勵上（即時風險），下一步的期望價值 γE[V(s′)] 不加懲罰。選一個候選 β 看它的 Q 表。γE[V(s′)] 對兩個動作一樣（下一次遇到哪種情境與這次怎麼派無關），所以選擇只看兩者的差 ΔQ = Q(技) − Q(成)。</p>
+  <div class="params"><label for="bSel">檢視的候選 β<span class="val" id="bSelv"></span><input id="bSel" type="range" min="0" max="63" step="1" value="40"><span style="font-size:12px">只決定畫面顯示哪一格（也是「選擇機率」與「軌跡似然」圖上的直線），不影響任何計算；每一輪 E 步都會把全部候選 β 算過一遍。</span></label></div>
+  <div class="scroll"><table id="qTable"></table></div>
+</section>
+
+<section class="card" id="card-pi">
+  <h2>選擇機率<span class="eqno">softmax 選擇模型</span></h2>
+  <div class="formula">π(技 | s) = exp(λQ(s,技)) / [exp(λQ(s,成)) + exp(λQ(s,技))] = 1 / (1 + exp(−λ·ΔQ(s)))</div>
+  <p class="note">每條曲線是一個情境，縱軸是在那個情境下選技能優先的機率 π(技 | s)，橫軸是候選 β，直線是上面滑桿檢視的那一格。在情境 A、B，技能優先的變異較小，所以 β 越大越傾向它；情境 C 兩個動作的變異相同，β 不影響選擇，只比成本。曲線的陡峭程度取決於當輪的 θ：第 0 輪幾乎是平的，跑到收斂後才明顯。</p>
+  <div id="piChart"></div>
+</section>
+
+<section class="card" id="card-ll">
+  <h2>每條軌跡在每個候選 β 下的可能性<span class="eqno">軌跡似然</span></h2>
+  <div class="formula">log P(τᵢ | θ, β) = Σₜ log π(aₜ | sₜ)　（轉移機率與 θ 無關，略去）</div>
+  <p class="note">以選定軌跡與選定 β 逐步相加。因為只和「各情境選了幾次成、幾次技」有關，也可以寫成 Σₛ [技的次數 × log π(技|s) ＋ 成的次數 × log π(成|s)]。</p>
+  <div class="grid2">
+    <div class="scroll"><table id="llDetail"></table></div>
+    <div id="llSum"></div>
+  </div>
+</section>
+
+<section class="card" id="card-elbo">
+  <h2>整體吻合分數<span class="eqno">ELBO</span></h2>
+  <div class="formula">ELBO = Σᵢ log Σₙ pₙ · P(τᵢ | θ, β⁽ⁿ⁾)　（E 步把 q 設成下方的把握度表後，下界等於格點上的邊際似然）</div>
+  <div class="grid2"><div><div class="big" id="elboBig"></div><p class="note">越高越好。每一輪用平均合併、步長適中時，它應該一路上升。</p></div><div id="elboChart"></div></div>
+</section>
+
+<section class="card" id="card-w">
+  <h2>把握度表<span class="eqno">E 步：後驗 wᵢₙ</span></h2>
+  <div class="formula">wᵢₙ = pₙ · P(τᵢ | β⁽ⁿ⁾, θ) / Σₘ pₘ · P(τᵢ | β⁽ᵐ⁾, θ)</div>
+  <p class="note">第一列是先驗 pₙ：看資料之前對每個候選 β 的相信程度，取 LogNormal(0, 0.75²) 再正規化，所有軌跡共用，EM 過程中不變。其餘每一列是一條軌跡的後驗 wᵢₙ，每一欄是一個候選 β，顏色越深把握度越高；每一列加起來等於 1。拿每一列和第一列比，就看得出資料讓看法移動了多少；第 0 輪 θ 還很小時，各列幾乎和先驗一樣。後驗 wᵢₙ 就是 M 步真正使用的東西。滑鼠停在格子上可看數值。</p>
+  <div class="scroll"><table class="heat" id="wTable"></table></div>
+</section>
+
+<section class="card" id="card-bhat">
+  <h2>風險指標與它的不確定程度<span class="eqno">後驗摘要 β̂、σ</span></h2>
+  <div class="formula">β̂ᵢ = Σₙ wᵢₙ β⁽ⁿ⁾　　σᵢ² = Σₙ wᵢₙ (β⁽ⁿ⁾ − β̂ᵢ)²</div>
+  <p class="note">點為 β̂，橫線為 ±σ。這兩個數字只是把握度表的摘要，給人看、在 Phase B 選 β 用，M 步不直接用它們。</p>
+  <div id="bhatChart"></div>
+</section>
+
+<section class="card" id="card-g">
+  <h2>每條軌跡對 θ 的修正建議<span class="eqno">M 步：逐軌跡梯度</span></h2>
+  <div class="formula">gᵢ = Σₙ wᵢₙ · Σₜ λ (1[aₜ = 技] − π(技|sₜ)) · ∂ΔQ(sₜ)/∂θ</div>
+  <p class="note">一般式是 ∂Q(選的) − E_π[∂Q]；在兩個動作的情況下化簡成 (1[選技] − π(技)) × ∂ΔQ/∂θ。∂ΔQ/∂θ = (Δ成本, Δ重工率 − (β − 1)·θ₂·ΔVar係數)，其中後一項來自變異數懲罰。下表是選定軌跡的逐格明細。</p>
+  <div class="grid2">
+    <div class="scroll"><table id="gDetail"></table></div>
+    <div><div class="scroll"><table id="gTable"></table></div></div>
+  </div>
+</section>
+
+<section class="card" id="card-agg">
+  <h2>合併建議並更新 θ<span class="eqno">梯度合併與更新</span></h2>
+  <div class="formula">θ ← θ + α · d，　d = 平均、PCGrad 或 CAGrad 合併的方向</div>
+  <p class="note">左圖每個箭頭是一條軌跡的建議 gᵢ；粗箭頭是三種合併方式的結果。兩條建議的內積為負就算一對衝突。本頁 PCGrad 用固定的配對順序，CAGrad 取 c = 0.5。</p>
+  <div class="grid2"><div id="vecChart"></div><dl class="kv" id="updateKV"></dl></div>
+</section>
+
+<section class="card" id="card-path">
+  <h2>迭代軌跡</h2>
+  <p class="note">θ 在平面上的路徑。揭曉答案後會標出真實的 θ⋆。資料只有 150 次派工，收斂點不會剛好等於 θ⋆。</p>
+  <div class="grid2"><div id="pathChart"></div><div class="scroll"><table id="histTable"></table></div></div>
+</section>
+
+<section class="card" id="card-pb">
+  <h2>Phase B：產生並評估新的派工規則<span class="eqno">規則表與計分</span></h2>
+  <div class="formula">r̂(s,a) = θ̂ᵀφ(s,a)　→　代入均值-變異數 Q，指定 β，每個情境選 Q 較高的動作　→　J = E[Σₜ γᵗ r*(sₜ,aₜ)]</div>
+  <div class="params"><label for="bTarget">部署時指定的風險係數 β<span class="val" id="bTargetv"></span><input id="bTarget" type="range" min="0.2" max="3" step="0.1" value="1"></label></div>
+  <div class="scroll"><table id="pbTable"></table></div>
+  <p class="note" id="pbNote"></p>
+</section>
+
+<section class="card qa" id="qa">
+  <h2>課堂問答<span class="eqno">Q&amp;A</span></h2>
+  <p class="note">上課時同學實際問過的問題。除非特別註明，數字都是預設設定：範例資料（種子 12）、64 格、起點 θ = (−0.5, −0.5)、λ = 3、γ = 0.9、第 0 輪、滑桿停在第 41 格 β = 1.034。收斂後的 θ̂ ≈ (−2.209, −3.287)。</p>
+
+  <details><summary><b>Q1</b>「每個動作的評價」表裡的「檢視的候選 β」、E[R]、Var[R]、γE[V(s′)] 從哪裡讀？怎麼算出來的？</summary><div class="ans">
+    <p>β 是「每個動作的評價」卡片裡「檢視的候選 β」滑桿指到的那一格，其餘三個數字由 θ 和情境表算出。以情境 A 為例：</p>
+    <div class="scroll"><table><tr><th class="l">情境 A</th><th>φ(s,a)</th><th>E[R] = θ₁·成本 + θ₂·(1 − 修好率)</th><th>Var[R] = θ₂²·p(1 − p)</th><th>−½(β − 1)Var</th></tr>
+    <tr><td class="l">成本最低</td><td>(0.20, 0.55)</td><td>−0.100 − 0.275 = −0.375</td><td>0.25 × 0.45 × 0.55 = 0.0619</td><td>−0.0011</td></tr>
+    <tr><td class="l">技能優先</td><td>(0.55, 0.05)</td><td>−0.275 − 0.025 = −0.300</td><td>0.25 × 0.95 × 0.05 = 0.0119</td><td>−0.0002</td></tr></table></div>
+    <p>γE[V(s′)]：下一次遇到 A、B、C 的機率是 0.3、0.4、0.3，和這一步怎麼派無關。先在每個情境取「E[R] − ½(β − 1)Var」較大的動作，得到 A −0.3002、B −0.2502、C −0.1002，加權平均 M = −0.2202，再算 γE[V] = γM / (1 − γ) = 0.9 × (−0.2202) / 0.1 = −1.982。因為兩個動作的 γE[V] 相同，比較時會抵銷。</p>
+  </div></details>
+
+  <details><summary><b>Q2</b>β 一開始是隨機選的嗎？</summary><div class="ans">
+    <p>不是。滑桿只決定畫面顯示哪一格，預設停在第 41 格 β = 1.034（7 格版停在第 5 格 β = 1.58），不影響計算。演算法每一輪的 E 步都把全部 64 個候選 β 各算一次，得到整張把握度表，不需要先選 β。</p>
+    <p>論文中唯一隨機的是 θ 的起點（多起點再用 ELBO 篩選）。本頁的起點 θ 由「設定」卡片的滑桿指定，預設 (−0.5, −0.5)。</p>
+  </div></details>
+
+  <details><summary><b>Q3</b>E[R] = θ₁ × 成本 ＋ θ₂ × (1 − 修好率)，看起來不像 θ̂ᵀφ(s,a)？</summary><div class="ans">
+    <p>兩者是同一個公式。φ(s,a) = (成本, 1 − 修好率) 是這個派工的特徵期望值，θᵀφ = θ₁φ₁ + θ₂φ₂ 展開就是上式。「每個動作的評價」卡片的表格有一欄 φ(s,a)。</p>
+    <p>Phase B 只是把 θ 換成收斂後的 θ̂：r̂(A, 成) = −2.209 × 0.20 + (−3.287) × 0.55 = −2.250；r̂(A, 技) = −2.209 × 0.55 + (−3.287) × 0.05 = −1.379。</p>
+    <p>另外注意：Q 表有 64 張，對應的是每個候選 β⁽ⁿ⁾，不是 β̂。β̂ 是事後算出的後驗摘要。</p>
+  </div></details>
+
+  <details><summary><b>Q4</b>「選擇機率」卡片說「越保守的人（β 大），在情境 A、B 越傾向技能優先」，這只是對單一情境 π(技 | s) 說的，不是對每個情境，對嗎？</summary><div class="ans">
+    <p>對。圖上每條曲線是一個情境，這句話只能逐個情境成立，情境 C 就是反例。兩個動作的評價差是</p>
+    <div class="formula">ΔQ(s) = θ₁·Δ成本 + θ₂·Δ重工率 − ½(β − 1)·θ₂²·ΔVar係數，　ΔVar係數 = 技的 p(1 − p) − 成的 p(1 − p)</div>
+    <p>β 只出現在最後一項，方向由 ΔVar係數決定：</p>
+    <div class="scroll"><table><tr><th class="l">情境</th><th>技的 p(1 − p)</th><th>成的 p(1 − p)</th><th>ΔVar係數</th><th class="l">β 變大時</th></tr>
+    <tr><td class="l">A</td><td>0.0475</td><td>0.2475</td><td>−0.200</td><td class="l">越傾向技能優先</td></tr>
+    <tr><td class="l">B</td><td>0.0475</td><td>0.2100</td><td>−0.163</td><td class="l">同上，幅度較小</td></tr>
+    <tr><td class="l">C</td><td>0.0475</td><td>0.0475</td><td>0</td><td class="l">不變，曲線是平的</td></tr></table></div>
+    <p>一般的說法是：β 越大，在每個情境都越傾向「那個情境裡變異較小的動作」。本例 A、B 裡技能優先剛好都是變異較小的那個；在真實派工中，每個情境的答案可能不同。兩個動作變異相同的情境對判斷 β 沒有幫助。</p>
+  </div></details>
+
+  <details><summary><b>Q5</b>怎麼帶學生讀「選擇機率」的圖？</summary><div class="ans">
+    <ol>
+      <li><b>認識圖：</b>橫軸是候選 β（對數刻度，左邊愛冒險、右邊保守、1 為中性），縱軸是 π(技 | s)，三條線各是一個情境，直線是「每個動作的評價」滑桿所在的那一格。</li>
+      <li><b>沿一條線往右看（β 的作用）：</b>同一情境下越保守越怎麼選。A、B 上升，C 水平。</li>
+      <li><b>在同一個 β 上下比（情境的作用）：</b>A 最高（成本最低的人技能差很多，最值得改派），B 其次，C 最低。</li>
+      <li><b>按「跑到收斂」再讀一次（θ 的作用）：</b>見下表。</li>
+      <li><b>接到軌跡似然：</b>這張圖是對照表，每個 β 預測各情境選技能優先幾成，拿真實軌跡來比，吻合的 β 可能性就高。</li>
+    </ol>
+    <div class="scroll"><table><tr><th class="l">π(技 | s)</th><th>β = 0.02</th><th>0.3</th><th>1</th><th>3</th><th>10</th></tr>
+    <tr><td class="l">第 0 輪 A</td><td>0.54</td><td>0.54</td><td>0.56</td><td>0.59</td><td>0.71</td></tr>
+    <tr><td class="l">第 0 輪 B</td><td>0.49</td><td>0.49</td><td>0.50</td><td>0.53</td><td>0.63</td></tr>
+    <tr><td class="l">第 0 輪 C</td><td>0.41</td><td>0.41</td><td>0.41</td><td>0.41</td><td>0.41</td></tr>
+    <tr><td class="l">收斂後 A</td><td>0.36</td><td>0.59</td><td>0.93</td><td>1.00</td><td>1.00</td></tr>
+    <tr><td class="l">收斂後 B</td><td>0.15</td><td>0.26</td><td>0.69</td><td>1.00</td><td>1.00</td></tr>
+    <tr><td class="l">收斂後 C</td><td>0.16</td><td>0.16</td><td>0.16</td><td>0.16</td><td>0.16</td></tr></table></div>
+    <p>第 0 輪 θ₂² 只有 0.25，變異數懲罰很弱，三條線都近乎水平。收斂後 θ₂² ≈ 10.8，A、B 變成 S 形，並有翻轉點：A 約在 β ≈ 0.19、B 約在 β ≈ 0.69 穿過 0.5。</p>
+    <p>直覺例子：某人在 B 有 80% 選技能優先，在收斂後的 B 線上找高度 0.8，約 β ≈ 1.2。但這只是直覺；E 步會同時看所有情境的所有步數並乘上先驗，得到的是一整張分配。</p>
+  </div></details>
+
+  <details><summary><b>Q6</b>「軌跡似然」明細第 1 步「A、技能優先、π(選的) 0.557、log π −0.586」怎麼算？</summary><div class="ans">
+    <ol>
+      <li>第 1 步 E[R]：成 −0.375，技 −0.300（見 Q1）。</li>
+      <li>第 2 步懲罰：½(β − 1) = ½ × 0.0343 = 0.01717，成 0.01717 × 0.061875 = 0.001062，技 0.01717 × 0.011875 = 0.000204。</li>
+      <li>第 3 步 Q：成 −0.375 − 0.001062 − 1.98183 = −2.35790；技 −0.300 − 0.000204 − 1.98183 = −2.28204。</li>
+      <li>第 4 步選擇機率：ΔQ = −2.28204 − (−2.35790) = 0.07586；λΔQ = 0.22758；π(技 | A) = 1 / (1 + e^(−0.22758)) = 1 / 1.79648 = <b>0.557</b>。</li>
+      <li>第 5 步取自然對數：ln 0.557 = <b>−0.586</b>。這是第 1 步，所以累計也是 −0.586；之後每步的 log π 一路相加到第 15 步，就是 log P(τ | β)。</li>
+    </ol>
+    <p>若這一步選的是成本最低，π(選的) = 0.443，log π = −0.813。取 log 是因為 15 個機率相乘會小到 10⁻⁴ 以下，改成相加比較好讀、也不易失真。換一格 β，懲罰項會變，這一列也跟著變。</p>
+  </div></details>
+
+  <details><summary><b>Q7</b>ELBO 公式裡的 pₙ 是什麼？</summary><div class="ans">
+    <p>pₙ 是第 n 個候選 β 的<b>先驗機率</b>：看任何軌跡之前，認為一位派工員的風險個性落在第 n 格的機率。論文設 β ~ LogNormal(0, 0.75²)：</p>
+    <div class="formula">pₙ ∝ exp(−½ · (ln β⁽ⁿ⁾ / 0.75)²)，再除以總和使 Σₙ pₙ = 1</div>
+    <p>例如第 41 格 β = 1.034：ln 1.034 = 0.0337，原始分數 exp(−0.0010) ≈ 0.999，正規化後 p₄₁ = 0.0525，是 64 格中最大的。第 1 格 β = 0.02 只有 6×10⁻⁸，第 64 格 β = 10 為 0.0005；β 在 0.5 到 2 之間合計約 64%。格點在 ln β 上等間距，所以不必再乘對數常態密度的 1/β。</p>
+    <p>Σₙ pₙ · P(τᵢ | θ, β⁽ⁿ⁾) 是用先驗加權的平均似然，也就是對 β 積分的格點近似，稱為邊際似然 P(τᵢ | θ)。把握度表熱度圖的第一列就是 pₙ。</p>
+    <div class="scroll"><table><tr><th class="l"></th><th class="l">pₙ（先驗）</th><th class="l">wᵢₙ（後驗）</th></tr>
+    <tr><td class="l">何時決定</td><td class="l">看資料之前</td><td class="l">看過軌跡 i 之後</td></tr>
+    <tr><td class="l">每條軌跡是否不同</td><td class="l">全部共用</td><td class="l">每條各一組</td></tr>
+    <tr><td class="l">EM 過程中</td><td class="l">固定不變</td><td class="l">每一輪重算</td></tr></table></div>
+  </div></details>
+
+  <details><summary><b>Q8</b>把握度表公式的分母 Σₘ pₘ · P(τᵢ | β⁽ᵐ⁾, θ) 可以寫成 Σₙ pₙ · P(τᵢ | θ, β⁽ⁿ⁾) 嗎？</summary><div class="ans">
+    <p>數值上相等：m 只是加總用的啞變數，換成哪個字母都是把 1 到 K 格加起來；P(τᵢ | β⁽ⁿ⁾, θ) 和 P(τᵢ | θ, β⁽ⁿ⁾) 條件的順序也不影響意義。</p>
+    <p>但不建議這樣寫。分子的 n 是「正在算的那一格」，分母若也用 n 當加總變數，同一個符號會有兩個意思，容易誤讀。所以論文分母用 m。分母其實就是邊際似然 P(τᵢ | θ)，公式可以讀成</p>
+    <div class="formula">wᵢₙ = pₙ · P(τᵢ | β⁽ⁿ⁾, θ) / P(τᵢ | θ)　（後驗 ∝ 先驗 × 似然）</div>
+    <p>驗算（7 格版、τ₁、第 0 輪、第 4 格 β = 1）：分子 0.252 × 2.652×10⁻⁵ = 6.683×10⁻⁶，分母（7 格分子總和）2.578×10⁻⁵，w₁,₄ = 0.259；ln(分母) = −10.566，正是 ELBO 裡 τ₁ 那一項。第 0 輪 w₁ₙ（0.051、0.131、0.223、0.259、0.202、0.103、0.032）和先驗（0.046、0.119、0.208、0.252、0.209、0.119、0.046）很接近，因為此時不同 β 的似然只差一點，資料還幾乎沒改變看法。</p>
+  </div></details>
+
+  <details><summary><b>Q9</b>資料裡的「情境 A、B、C」是環境的回饋，還是事先幫軌跡標好的標籤？</summary><div class="ans">
+    <p>兩者都不是。它是<b>狀態 sₜ</b>：派工員做決定<b>之前</b>就看得到的現場狀況，也就是 Q、選擇機率與軌跡似然裡的 s。</p>
+    <ul>
+      <li><b>不是回饋。</b>回饋是做完決定之後才知道的結果，例如這次有沒有一次修好、花了多少成本。本頁的資料只有「情境、選擇」兩欄，沒有結果欄；逆強化學習本來就只看選擇，不看獎勵。</li>
+      <li><b>不是給人或軌跡貼的標籤。</b>它不告訴我們這位派工員保守與否，β 仍然要從選擇推出來。它也不是某人事後主觀評分的。</li>
+      <li><b>它是怎麼來的：</b>由環境產生、再用固定規則分類。本頁模擬中，下一個情境依 A 0.3、B 0.4、C 0.3 的機率由環境抽出，和這一步怎麼派無關，即軌跡似然裡的轉移機率 P(sₜ₊₁ | sₜ, aₜ)。實際專案中，MES 紀錄在派工當下的機台與工程師狀態，我們再用事先和資深派工員約定的規則把它歸類，例如「成本最低人選的技能缺口 × 改派要多花的成本是否偏高」（範例程式 mes_sim.py 的 situation 函式，共 6 類）。</li>
+    </ul>
+    <p>換句話說：情境的<b>分類規則</b>是事先定好的，情境的<b>值</b>是每一步從當下狀態算出來的。真實的 MES 紀錄通常也有結果欄（例如 fixed，有沒有一次修好），它可以用來估計修好率、成本這些環境參數，但不會直接當成獎勵去訓練 θ。</p>
+  </div></details>
+  <details><summary><b>Q10</b>方法論上，演算法能不能不用「情境分類」，直接改用「當下的狀態」？</summary><div class="ans">
+    <p>可以，但要看「當下的狀態」有多大。這個方法本身不需要情境分類；分類是為了能用表格計算而做的簡化，不是演算法的要求。狀態 s 只要讓下面三件事算得出來就行：</p>
+    <ol>
+      <li>每個 (s, a) 的特徵期望值與共變異數：均值-變異數 Q 需要 E[R] = θᵀφ(s,a) 與 Var[R] = θᵀΣ(s,a)θ。</li>
+      <li>下一步的期望價值 γE[V(s′)]：需要轉移機率 P(s′ | s, a)。</li>
+      <li>對每個候選 β 解一次均值-變異數 Q：每一輪 E 步要解 64 次。</li>
+    </ol>
+    <div class="scroll"><table><tr><th class="l">情況</th><th class="l">做法</th><th class="l">代價與限制</th></tr>
+    <tr><td class="l" style="white-space:normal;min-width:10em">離散且數量不大（例如故障數 × 各工程師是否空閒 × 技能等級）</td><td class="l" style="white-space:normal;min-width:14em">直接用它當 s，程式不必改，只是表變大；Bellman 算子的壓縮性對任何有限狀態空間都成立。</td><td class="l" style="white-space:normal;min-width:16em">每個 (s, a) 要有足夠紀錄；範例程式中，少於 5 筆的格子會退回同一動作的整體平均。</td></tr>
+    <tr><td class="l" style="white-space:normal">很大或是連續值</td><td class="l" style="white-space:normal">改用函數近似表示 Q_β(s, a; θ)，用近似值迭代求解。</td><td class="l" style="white-space:normal">派工模擬光是 20 位工程師的位置就有 13²⁰ ≈ 10²² 種組合。論文的收斂定理假設 Q 與梯度精確算出；近似誤差的影響論文沒有處理，也尚未實際測試。</td></tr>
+    <tr><td class="l" style="white-space:normal">折衷（實務最常用）</td><td class="l" style="white-space:normal">每筆紀錄的實際成本直接進 φ；只有決定 γE[V(s′)] 的狀態用較粗的分類。</td><td class="l" style="white-space:normal">仍要檢查分類是否漏掉派工員真正會看的資訊。</td></tr></table></div>
+    <ul>
+      <li><b>太粗，會把資訊損失誤認成風險態度。</b>同一類裡模型看不到的差異，一部分被算進 Σ(s,a) 讓 Var[R] 變大，一部分變成「同樣情境卻做了不同選擇」，兩者都可能被解釋成 β 的差異。</li>
+      <li><b>太細，會讓估計不穩。</b>每格資料太少，修好率與轉移機率估不準，θ 與 β 也跟著不穩。</li>
+      <li><b>β 只能從特定狀態辨識。</b>只有兩個動作變異數不同的狀態能提供 β 的資訊（Q4），分類時應保留會影響結果變異的變數。</li>
+    </ul>
+    <p>建議做法：先用情境分類跑通 Phase A 與 Phase B；再逐步加入派工員真正會看的變數；每換一種狀態定義，就用留出資料的對數似然（保留部分班次不參與訓練）比較，細的版本預測得更準才改用。</p>
+  </div></details>
+</section>
+
+<footer>
+  <div>本頁是 Kao-Shing Hwang 與 Jin-Ling Lin 風險敏感逆強化學習論文（審查中）的互動示範，也對應《風險敏感逆強化學習：產學合作專題導讀與實作指引》第四節。模型為教學用的縮小版：三種情境、兩個動作、兩個特徵；計算方式與論文實作相同，只是 M 步的導數在此可寫成解析式（論文實作用中央差分）。</div>
+  <div>網址：<a href="https://stsp-data.com/ai-design/Risk-Sensitive-IRL/">https://stsp-data.com/ai-design/Risk-Sensitive-IRL/</a>　｜　<a href="index_en.html" lang="en">English version</a></div>
+</footer>
+</div>
+<script src="assets/em-core.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

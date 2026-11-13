@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the accompanying article."
+title: "Immediate-Risk Inverse Reinforcement Learning from Identity-Unlabeled Heterogeneous Demonstrations: code and results"
+authors:
+  - family-names: Hwang
+    given-names: Kao-Shing
+  - family-names: Lin
+    given-names: Jin-Ling
+type: software
+license: MIT

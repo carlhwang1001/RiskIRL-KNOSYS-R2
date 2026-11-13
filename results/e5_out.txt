@@ -1,0 +1,13 @@
+  mu  RetVar |         expert true b | P(risky) | b_hat (post. mean)         90% CI | asymptotic b_hat
+  -1    0.82 | immediate-risk    0.5 |    0.905 |               0.52   [0.35, 0.70] |             0.50
+   0    1.81 | immediate-risk    0.5 |    0.905 |               0.35   [0.19, 0.52] |             0.50
+   1    4.42 | immediate-risk    0.5 |    0.905 |               0.58   [0.43, 0.77] |             0.50
+  -1    0.82 | immediate-risk    2.0 |    0.500 |               1.90   [1.87, 2.06] |             2.00
+   0    1.81 | immediate-risk    2.0 |    0.500 |               2.01   [1.87, 2.06] |             2.00
+   1    4.42 | immediate-risk    2.0 |    0.500 |               2.04   [1.87, 2.06] |             2.00
+  -1    0.82 | return-variance    0.5 |    0.892 |               0.63   [0.47, 0.77] |             0.59
+   0    1.81 | return-variance    0.5 |    0.946 |               0.21   [0.10, 0.35] |             0.09
+   1    4.42 | return-variance    0.5 |    0.992 |               0.13   [0.06, 0.21] |            -1.21
+  -1    0.82 | return-variance    2.0 |    0.567 |               1.87   [1.87, 1.87] |             1.82
+   0    1.81 | return-variance    2.0 |    0.229 |               2.78   [2.77, 2.77] |             2.81
+   1    4.42 | return-variance    2.0 |    0.006 |               4.91   [4.54, 5.53] |             5.42

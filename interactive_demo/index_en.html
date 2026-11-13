@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>EM Dispatch Lab | Interactive demo of risk-sensitive inverse reinforcement learning</title>
+<meta name="description" content="Step through variational EM for risk-sensitive inverse reinforcement learning in the browser, using ten identity-unlabeled dispatch trajectories: mean-variance Q, choice probabilities, trajectory likelihood, posterior table, per-trajectory gradients, gradient aggregation, and Phase B.">
+<link rel="canonical" href="https://stsp-data.com/ai-design/Risk-Sensitive-IRL/index_en.html">
+<link rel="alternate" hreflang="zh-Hant" href="https://stsp-data.com/ai-design/Risk-Sensitive-IRL/">
+<link rel="alternate" hreflang="en" href="https://stsp-data.com/ai-design/Risk-Sensitive-IRL/index_en.html">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://stsp-data.com/ai-design/Risk-Sensitive-IRL/index_en.html">
+<meta property="og:title" content="EM Dispatch Lab | Risk-sensitive IRL, step by step">
+<meta property="og:description" content="Variational EM for risk-sensitive inverse reinforcement learning, computed live in the browser: a shared reward and a per-trajectory risk coefficient learned from identity-unlabeled demonstrations.">
+<meta property="og:locale" content="en_US">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="langbar" aria-label="Language"><a href="index.html" lang="zh-Hant">中文</a><a href="index_en.html" aria-current="page">English</a></nav>
+<header class="top">
+  <h1>EM Dispatch Lab</h1>
+  <p class="lede">Ten dispatchers each make 15 dispatch decisions, and the records do not say who made which decision. In every iteration, the current shared reward θ is used to fill in a table of posterior weights over candidate β for each trajectory (E-step), and the whole table is then used to correct θ (M-step). Each card below corresponds to one computational step of the method; every number is computed live in your browser.</p>
+</header>
+
+<div class="bar" role="toolbar" aria-label="Iteration controls">
+  <span class="iter">Iteration <b id="iterNo">0</b>　θ = <span id="thNow" class="mono"></span>　ELBO = <span id="elboNow" class="mono"></span></span>
+  <button id="btnStep" class="primary">Next iteration</button>
+  <button id="btnPlay" aria-pressed="false">Auto play</button>
+  <button id="btnConv">Run to convergence</button>
+  <button id="btnReset">Reset</button>
+  <button id="btnReveal" aria-pressed="false">Reveal answers</button>
+</div>
+
+<section class="card" id="setup">
+  <h2>Setup<span class="eqno">adjustable</span></h2>
+  <p class="note">Situations A, B and C differ in whether the cheapest engineer is skilled enough for the job. Two actions: <span style="color:var(--risky);font-weight:700">C</span> = send the lowest-cost engineer (cheap, may need rework); <span style="color:var(--safe);font-weight:700">S</span> = send a skilled engineer (more expensive, fixes the fault first time with probability 0.95). The reward of each step is R = θ₁ × dispatch cost + θ₂ × rework (rework is 1 or 0).</p>
+  <div class="scroll"><table id="envTable"></table></div>
+  <div class="params" style="margin-top:14px">
+    <label for="th1">Initial θ₁ (cost weight)<span class="val" id="th1v"></span><input id="th1" type="range" min="-4" max="0" step="0.1" value="-0.5"></label>
+    <label for="th2">Initial θ₂ (rework weight)<span class="val" id="th2v"></span><input id="th2" type="range" min="-5" max="0" step="0.1" value="-0.5"></label>
+    <label for="alpha">Step size α<span class="val" id="alphav"></span><input id="alpha" type="range" min="0.05" max="1.2" step="0.05" value="0.4"></label>
+    <label for="lam">Rationality constant λ (fixed)<span class="val" id="lamv"></span><input id="lam" type="range" min="1" max="6" step="0.5" value="3"></label>
+    <label for="gam">Discount γ<span class="val" id="gamv"></span><input id="gam" type="range" min="0.5" max="0.95" step="0.05" value="0.9"></label>
+    <label for="kSel">Number of candidate β<select id="kSel"><option value="7">7 nodes (for hand calculation)</option><option value="64" selected>64 nodes (paper setting)</option></select></label>
+    <label for="opSel">Aggregation<select id="opSel"><option value="mean">Mean</option><option value="pcgrad">PCGrad</option><option value="cagrad">CAGrad</option></select></label>
+    <label for="bhatOnly">M-step input<select id="bhatOnly"><option value="0">Whole posterior table (correct)</option><option value="1">β̂ only (common mistake)</option></select></label>
+  </div>
+</section>
+
+<section class="card" id="dataCard">
+  <h2>Data: ten identity-unlabeled trajectories<span class="eqno">τ₁ … τ₁₀</span></h2>
+  <p class="note">Each cell is one dispatch decision: the letter is the situation and the colour is the choice. Click a cell to flip that choice; click a row label to select a trajectory, and the detailed tables below follow it. Changing the data or any parameter returns to iteration 0.</p>
+  <div class="legend"><span><span class="sw" style="background:var(--risky)"></span>Lowest cost (C)</span><span><span class="sw" style="background:var(--safe)"></span>Skill first (S)</span><span class="reveal" id="revealNote" hidden>The right column shows the revealed true β</span></div>
+  <div id="trajGrid" class="traj"></div>
+  <div class="params" style="margin-top:12px">
+    <label for="seed">Random seed for new data<input id="seed" type="number" min="1" max="99999" value="12"></label>
+    <label for="steps">Steps per trajectory<input id="steps" type="number" min="5" max="40" value="15"></label>
+    <span style="display:flex;gap:8px;align-items:end;flex-wrap:wrap"><button id="btnGen">Generate</button><button id="btnDefault">Back to example data</button></span>
+  </div>
+</section>
+
+<section class="card" id="card-q">
+  <h2>Value of each action<span class="eqno">mean-variance Q</span></h2>
+  <div class="formula">Q_β(s,a) = E[R] − ½(β − 1)·Var[R]/R₀ + γ·E[V(s′)]　　R₀ = 1<br>E[R] = θᵀφ(s,a) = θ₁·cost + θ₂·(1 − fix rate), φ(s,a) = (cost, 1 − fix rate)　　Var[R] = θ₂²·fix rate·(1 − fix rate)</div>
+  <p class="note">φ(s,a) is the expected feature vector of the dispatch (cost and rework probability), so E[R] is the inner product of θ and φ, the same formula as r̂ = θ̂ᵀφ in Phase B. The variance penalty applies only to the reward of the current step (immediate risk); the continuation value γE[V(s′)] is not penalised. Pick a candidate β to see its Q table. γE[V(s′)] is the same for both actions (the next situation does not depend on the current choice), so the choice depends only on the difference ΔQ = Q(S) − Q(C).</p>
+  <div class="params"><label for="bSel">Candidate β on display<span class="val" id="bSelv"></span><input id="bSel" type="range" min="0" max="63" step="1" value="40"><span style="font-size:12px">This only selects which node is displayed (and the vertical line in the choice-probability and likelihood charts); it does not affect any computation. Every E-step evaluates all candidate β.</span></label></div>
+  <div class="scroll"><table id="qTable"></table></div>
+</section>
+
+<section class="card" id="card-pi">
+  <h2>Choice probability<span class="eqno">softmax choice model</span></h2>
+  <div class="formula">π(S | s) = exp(λQ(s,S)) / [exp(λQ(s,C)) + exp(λQ(s,S))] = 1 / (1 + exp(−λ·ΔQ(s)))</div>
+  <p class="note">Each curve is one situation: the vertical axis is the probability π(S | s) of choosing skill first in that situation, the horizontal axis is the candidate β, and the vertical line marks the node selected above. In situations A and B, skill first has the smaller variance, so a larger β favours it; in situation C both actions have the same variance, so β does not affect the choice and only cost matters. How steep the curves are depends on the current θ: they are almost flat at iteration 0 and become pronounced after convergence.</p>
+  <div id="piChart"></div>
+</section>
+
+<section class="card" id="card-ll">
+  <h2>Likelihood of each trajectory under each candidate β<span class="eqno">trajectory likelihood</span></h2>
+  <div class="formula">log P(τᵢ | θ, β) = Σₜ log π(aₜ | sₜ)　(transition probabilities do not depend on θ and are omitted)</div>
+  <p class="note">Step-by-step sum for the selected trajectory and the selected β. Because only the counts of C and S choices in each situation matter, it can also be written as Σₛ [count of S × log π(S|s) + count of C × log π(C|s)].</p>
+  <div class="grid2">
+    <div class="scroll"><table id="llDetail"></table></div>
+    <div id="llSum"></div>
+  </div>
+</section>
+
+<section class="card" id="card-elbo">
+  <h2>Overall fit<span class="eqno">ELBO</span></h2>
+  <div class="formula">ELBO = Σᵢ log Σₙ pₙ · P(τᵢ | θ, β⁽ⁿ⁾)　(once the E-step sets q to the posterior table below, the bound equals the marginal likelihood on the grid)</div>
+  <div class="grid2"><div><div class="big" id="elboBig"></div><p class="note">Higher is better. With mean aggregation and a moderate step size it should rise at every iteration.</p></div><div id="elboChart"></div></div>
+</section>
+
+<section class="card" id="card-w">
+  <h2>Posterior table<span class="eqno">E-step: posterior wᵢₙ</span></h2>
+  <div class="formula">wᵢₙ = pₙ · P(τᵢ | β⁽ⁿ⁾, θ) / Σₘ pₘ · P(τᵢ | β⁽ᵐ⁾, θ)</div>
+  <p class="note">The first row is the prior pₙ: the belief in each candidate β before any data are seen, taken from LogNormal(0, 0.75²) and normalised; it is shared by all trajectories and does not change during EM. Every other row is the posterior wᵢₙ of one trajectory; each column is a candidate β, darker means more weight, and each row sums to 1. Comparing a row with the first row shows how far the data have moved the belief; at iteration 0, while θ is still small, the rows look almost like the prior. The posterior wᵢₙ is what the M-step actually uses. Hover over a cell to see its value.</p>
+  <div class="scroll"><table class="heat" id="wTable"></table></div>
+</section>
+
+<section class="card" id="card-bhat">
+  <h2>Risk estimate and its uncertainty<span class="eqno">posterior summary β̂, σ</span></h2>
+  <div class="formula">β̂ᵢ = Σₙ wᵢₙ β⁽ⁿ⁾　　σᵢ² = Σₙ wᵢₙ (β⁽ⁿ⁾ − β̂ᵢ)²</div>
+  <p class="note">Dots show β̂ and bars show ±σ. These two numbers only summarise the posterior table for reporting and for choosing β in Phase B; the M-step does not use them directly.</p>
+  <div id="bhatChart"></div>
+</section>
+
+<section class="card" id="card-g">
+  <h2>Each trajectory's suggested correction to θ<span class="eqno">M-step: per-trajectory gradient</span></h2>
+  <div class="formula">gᵢ = Σₙ wᵢₙ · Σₜ λ (1[aₜ = S] − π(S|sₜ)) · ∂ΔQ(sₜ)/∂θ</div>
+  <p class="note">The general form is ∂Q(chosen) − E_π[∂Q]; with two actions it reduces to (1[chose S] − π(S)) × ∂ΔQ/∂θ, where ∂ΔQ/∂θ = (Δcost, Δrework rate − (β − 1)·θ₂·Δvariance coefficient) and the last term comes from the variance penalty. The tables show the node-by-node detail for the selected trajectory.</p>
+  <div class="grid2">
+    <div class="scroll"><table id="gDetail"></table></div>
+    <div><div class="scroll"><table id="gTable"></table></div></div>
+  </div>
+</section>
+
+<section class="card" id="card-agg">
+  <h2>Aggregate the suggestions and update θ<span class="eqno">aggregation and update</span></h2>
+  <div class="formula">θ ← θ + α · d,　d = direction from mean, PCGrad or CAGrad aggregation</div>
+  <p class="note">Each thin arrow is one trajectory's suggestion gᵢ; the thick arrows are the three aggregated directions. A pair of suggestions with a negative inner product counts as one conflict. On this page PCGrad uses a fixed pair order and CAGrad uses c = 0.5.</p>
+  <div class="grid2"><div id="vecChart"></div><dl class="kv" id="updateKV"></dl></div>
+</section>
+
+<section class="card" id="card-path">
+  <h2>Iteration path</h2>
+  <p class="note">Path of θ in the plane. After “Reveal answers”, the true θ⋆ is marked. With only 150 dispatch decisions, the converged point does not coincide exactly with θ⋆.</p>
+  <div class="grid2"><div id="pathChart"></div><div class="scroll"><table id="histTable"></table></div></div>
+</section>
+
+<section class="card" id="card-pb">
+  <h2>Phase B: generate and evaluate a new dispatch rule<span class="eqno">rule table and score</span></h2>
+  <div class="formula">r̂(s,a) = θ̂ᵀφ(s,a)　→　plug into the mean-variance Q with a chosen β and pick the action with the higher Q in each situation　→　J = E[Σₜ γᵗ r*(sₜ,aₜ)]</div>
+  <div class="params"><label for="bTarget">Risk coefficient β chosen for deployment<span class="val" id="bTargetv"></span><input id="bTarget" type="range" min="0.2" max="3" step="0.1" value="1"></label></div>
+  <div class="scroll"><table id="pbTable"></table></div>
+  <p class="note" id="pbNote"></p>
+</section>
+
+<section class="card qa" id="qa">
+  <h2>Classroom questions<span class="eqno">Q&amp;A</span></h2>
+  <p class="note">Questions that students actually asked in class. Unless stated otherwise, the numbers use the default setting: example data (seed 12), 64 nodes, initial θ = (−0.5, −0.5), λ = 3, γ = 0.9, iteration 0, and the slider at node 41, β = 1.034. After convergence θ̂ ≈ (−2.209, −3.287).</p>
+
+  <details><summary><b>Q1</b>In the “Value of each action” table, where do the displayed candidate β, E[R], Var[R] and γE[V(s′)] come from, and how are they computed?</summary><div class="ans">
+    <p>β is the node selected by the “Candidate β on display” slider in that card; the other three numbers follow from θ and the situation table. Take situation A:</p>
+    <div class="scroll"><table><tr><th class="l">Situation A</th><th>φ(s,a)</th><th>E[R] = θ₁·cost + θ₂·(1 − fix rate)</th><th>Var[R] = θ₂²·p(1 − p)</th><th>−½(β − 1)Var</th></tr>
+    <tr><td class="l">Lowest cost</td><td>(0.20, 0.55)</td><td>−0.100 − 0.275 = −0.375</td><td>0.25 × 0.45 × 0.55 = 0.0619</td><td>−0.0011</td></tr>
+    <tr><td class="l">Skill first</td><td>(0.55, 0.05)</td><td>−0.275 − 0.025 = −0.300</td><td>0.25 × 0.95 × 0.05 = 0.0119</td><td>−0.0002</td></tr></table></div>
+    <p>γE[V(s′)]: the next job is A, B or C with probability 0.3, 0.4, 0.3, regardless of the current choice. In each situation take the action with the larger “E[R] − ½(β − 1)Var”, which gives A −0.3002, B −0.2502, C −0.1002 and a weighted mean M = −0.2202; then γE[V] = γM / (1 − γ) = 0.9 × (−0.2202) / 0.1 = −1.982. Because γE[V] is the same for both actions, it cancels in the comparison.</p>
+  </div></details>
+
+  <details><summary><b>Q2</b>Is β chosen at random at the start?</summary><div class="ans">
+    <p>No. The slider only chooses which node is displayed; by default it sits at node 41, β = 1.034 (node 5, β = 1.58, in the 7-node version), and it does not affect the computation. Every E-step evaluates all 64 candidate β and produces the whole posterior table, so no β has to be chosen in advance.</p>
+    <p>In the paper the only random element is the initial θ (multiple starts, then selection by ELBO). On this page the initial θ is set by the sliders in the Setup card, (−0.5, −0.5) by default.</p>
+  </div></details>
+
+  <details><summary><b>Q3</b>E[R] = θ₁ × cost + θ₂ × (1 − fix rate) does not look like θ̂ᵀφ(s,a). Is it the same thing?</summary><div class="ans">
+    <p>Yes. φ(s,a) = (cost, 1 − fix rate) is the expected feature vector of the dispatch, and θᵀφ = θ₁φ₁ + θ₂φ₂ expands to exactly that expression. The table in the “Value of each action” card shows φ(s,a) in its own column.</p>
+    <p>Phase B simply replaces θ with the converged θ̂: r̂(A, C) = −2.209 × 0.20 + (−3.287) × 0.55 = −2.250; r̂(A, S) = −2.209 × 0.55 + (−3.287) × 0.05 = −1.379.</p>
+    <p>Note also that there are 64 Q tables, one for each candidate β⁽ⁿ⁾, not one for β̂. β̂ is a posterior summary computed afterwards.</p>
+  </div></details>
+
+  <details><summary><b>Q4</b>The choice-probability card says that more cautious dispatchers (larger β) prefer skill first in situations A and B. That statement is about π(S | s) in one situation at a time, not about every situation, right?</summary><div class="ans">
+    <p>Right. Each curve is one situation, and the statement holds situation by situation; situation C is the counterexample. The difference between the two actions is</p>
+    <div class="formula">ΔQ(s) = θ₁·Δcost + θ₂·Δrework rate − ½(β − 1)·θ₂²·Δvar,　Δvar = p(1 − p) of S − p(1 − p) of C</div>
+    <p>β appears only in the last term, and its direction is set by Δvar:</p>
+    <div class="scroll"><table><tr><th class="l">Situation</th><th>p(1 − p) of S</th><th>p(1 − p) of C</th><th>Δvar</th><th class="l">As β grows</th></tr>
+    <tr><td class="l">A</td><td>0.0475</td><td>0.2475</td><td>−0.200</td><td class="l">stronger preference for skill first</td></tr>
+    <tr><td class="l">B</td><td>0.0475</td><td>0.2100</td><td>−0.163</td><td class="l">same, smaller effect</td></tr>
+    <tr><td class="l">C</td><td>0.0475</td><td>0.0475</td><td>0</td><td class="l">no change; the curve is flat</td></tr></table></div>
+    <p>The general statement is: a larger β favours, in every situation, the action with the smaller variance in that situation. In this example skill first happens to be the lower-variance action in both A and B; in real dispatching the answer may differ from situation to situation. Situations in which both actions have the same variance carry no information about β.</p>
+  </div></details>
+
+  <details><summary><b>Q5</b>How should students be guided through the choice-probability chart?</summary><div class="ans">
+    <ol>
+      <li><b>Read the axes:</b> the horizontal axis is candidate β (log scale; risk-seeking on the left, cautious on the right, 1 is neutral), the vertical axis is π(S | s), each of the three curves is one situation, and the vertical line is the node selected in the “Value of each action” card.</li>
+      <li><b>Move right along one curve (effect of β):</b> how choices change with caution within one situation. A and B rise; C is flat.</li>
+      <li><b>Compare vertically at one β (effect of the situation):</b> A is highest (the cheapest engineer is far under-skilled, so reassigning pays most), then B, then C.</li>
+      <li><b>Press “Run to convergence” and read again (effect of θ):</b> see the table below.</li>
+      <li><b>Link to the trajectory likelihood:</b> the chart is a lookup table in which each β predicts how often skill first is chosen in each situation; a β that matches a real trajectory well gets a high likelihood.</li>
+    </ol>
+    <div class="scroll"><table><tr><th class="l">π(S | s)</th><th>β = 0.02</th><th>0.3</th><th>1</th><th>3</th><th>10</th></tr>
+    <tr><td class="l">Iteration 0, A</td><td>0.54</td><td>0.54</td><td>0.56</td><td>0.59</td><td>0.71</td></tr>
+    <tr><td class="l">Iteration 0, B</td><td>0.49</td><td>0.49</td><td>0.50</td><td>0.53</td><td>0.63</td></tr>
+    <tr><td class="l">Iteration 0, C</td><td>0.41</td><td>0.41</td><td>0.41</td><td>0.41</td><td>0.41</td></tr>
+    <tr><td class="l">Converged, A</td><td>0.36</td><td>0.59</td><td>0.93</td><td>1.00</td><td>1.00</td></tr>
+    <tr><td class="l">Converged, B</td><td>0.15</td><td>0.26</td><td>0.69</td><td>1.00</td><td>1.00</td></tr>
+    <tr><td class="l">Converged, C</td><td>0.16</td><td>0.16</td><td>0.16</td><td>0.16</td><td>0.16</td></tr></table></div>
+    <p>At iteration 0, θ₂² is only 0.25, the variance penalty is weak, and all three curves are nearly flat. After convergence θ₂² ≈ 10.8, A and B become S-shaped and cross 0.5 at β ≈ 0.19 (A) and β ≈ 0.69 (B).</p>
+    <p>An intuitive example: a dispatcher who chooses skill first 80% of the time in B sits at height 0.8 on the converged B curve, about β ≈ 1.2. This is only intuition; the E-step combines all steps in all situations with the prior and returns a whole distribution.</p>
+  </div></details>
+
+  <details><summary><b>Q6</b>In the trajectory-likelihood detail, how is step 1 (“A, skill first, π(chosen) 0.557, log π −0.586”) computed?</summary><div class="ans">
+    <ol>
+      <li>E[R]: C −0.375, S −0.300 (see Q1).</li>
+      <li>Penalty: ½(β − 1) = ½ × 0.0343 = 0.01717; C 0.01717 × 0.061875 = 0.001062, S 0.01717 × 0.011875 = 0.000204.</li>
+      <li>Q: C −0.375 − 0.001062 − 1.98183 = −2.35790; S −0.300 − 0.000204 − 1.98183 = −2.28204.</li>
+      <li>Choice probability: ΔQ = −2.28204 − (−2.35790) = 0.07586; λΔQ = 0.22758; π(S | A) = 1 / (1 + e^(−0.22758)) = 1 / 1.79648 = <b>0.557</b>.</li>
+      <li>Natural log: ln 0.557 = <b>−0.586</b>. Because this is step 1, the running total is also −0.586; adding log π of every subsequent step up to step 15 gives log P(τ | β).</li>
+    </ol>
+    <p>Had the dispatcher chosen lowest cost in this step, π(chosen) = 0.443 and log π = −0.813. Logs are used because the product of 15 probabilities falls below 10⁻⁴; sums are easier to read and numerically safer. Choosing another β changes the penalty, and the whole row changes with it.</p>
+  </div></details>
+
+  <details><summary><b>Q7</b>What is pₙ in the ELBO formula?</summary><div class="ans">
+    <p>pₙ is the <b>prior probability</b> of the n-th candidate β: the probability, before any trajectory is seen, that a dispatcher's risk attitude falls on node n. The paper uses β ~ LogNormal(0, 0.75²):</p>
+    <div class="formula">pₙ ∝ exp(−½ · (ln β⁽ⁿ⁾ / 0.75)²), normalised so that Σₙ pₙ = 1</div>
+    <p>For node 41, β = 1.034: ln 1.034 = 0.0337, the raw score is exp(−0.0010) ≈ 0.999, and after normalisation p₄₁ = 0.0525, the largest of the 64 nodes. Node 1 (β = 0.02) has only 6×10⁻⁸ and node 64 (β = 10) has 0.0005; β between 0.5 and 2 carries about 64% in total. The nodes are evenly spaced in ln β, so the 1/β factor of the log-normal density is not needed.</p>
+    <p>Σₙ pₙ · P(τᵢ | θ, β⁽ⁿ⁾) is the prior-weighted average likelihood, i.e. the grid approximation of the integral over β, called the marginal likelihood P(τᵢ | θ). The first row of the posterior heat map is pₙ.</p>
+    <div class="scroll"><table><tr><th class="l"></th><th class="l">pₙ (prior)</th><th class="l">wᵢₙ (posterior)</th></tr>
+    <tr><td class="l">When it is set</td><td class="l">before seeing data</td><td class="l">after seeing trajectory i</td></tr>
+    <tr><td class="l">Different per trajectory?</td><td class="l">shared by all</td><td class="l">one set per trajectory</td></tr>
+    <tr><td class="l">During EM</td><td class="l">fixed</td><td class="l">recomputed every iteration</td></tr></table></div>
+  </div></details>
+
+  <details><summary><b>Q8</b>Can the denominator of the posterior formula, Σₘ pₘ · P(τᵢ | β⁽ᵐ⁾, θ), be written as Σₙ pₙ · P(τᵢ | θ, β⁽ⁿ⁾)?</summary><div class="ans">
+    <p>Numerically, yes: m is a dummy summation index, and any letter sums over nodes 1 to K; the order of the conditioning arguments in P(τᵢ | β⁽ⁿ⁾, θ) and P(τᵢ | θ, β⁽ⁿ⁾) does not change the meaning either.</p>
+    <p>It is still better not to write it that way. In the numerator, n is “the node being computed”; if the denominator also used n as its summation index, the same symbol would carry two meanings. That is why the paper uses m in the denominator. The denominator is simply the marginal likelihood P(τᵢ | θ), so the formula reads</p>
+    <div class="formula">wᵢₙ = pₙ · P(τᵢ | β⁽ⁿ⁾, θ) / P(τᵢ | θ)　(posterior ∝ prior × likelihood)</div>
+    <p>Check (7-node version, τ₁, iteration 0, node 4, β = 1): numerator 0.252 × 2.652×10⁻⁵ = 6.683×10⁻⁶; denominator (sum of the seven numerators) 2.578×10⁻⁵; w₁,₄ = 0.259; ln(denominator) = −10.566, which is exactly τ₁'s term in the ELBO. At iteration 0, w₁ₙ (0.051, 0.131, 0.223, 0.259, 0.202, 0.103, 0.032) is close to the prior (0.046, 0.119, 0.208, 0.252, 0.209, 0.119, 0.046), because the likelihoods under different β differ only slightly and the data have barely moved the belief.</p>
+  </div></details>
+
+  <details><summary><b>Q9</b>Are the situations A, B, C feedback from the environment, or labels attached to the trajectories in advance?</summary><div class="ans">
+    <p>Neither. They are the <b>state sₜ</b>: what the dispatcher can see <b>before</b> deciding, i.e. the s in Q, in the choice probability and in the trajectory likelihood.</p>
+    <ul>
+      <li><b>Not feedback.</b> Feedback is an outcome known only after the decision, such as whether the fault was fixed first time and what it cost. The data on this page have only two columns, situation and choice, with no outcome column; inverse reinforcement learning looks at choices, not rewards.</li>
+      <li><b>Not a label on a person or a trajectory.</b> It says nothing about whether the dispatcher is cautious; β still has to be inferred from the choices. Nor is it anyone's subjective rating.</li>
+      <li><b>Where it comes from:</b> it is produced by the environment and then classified by a fixed rule. In this simulation the next situation is drawn by the environment as A, B, C with probability 0.3, 0.4, 0.3, independently of the current choice; this is the transition probability P(sₜ₊₁ | sₜ, aₜ) in the trajectory likelihood. In a real project, the MES records the machine and engineer status at dispatch time, and the record is classified by rules agreed in advance with senior dispatchers, for example “skill gap of the cheapest engineer × whether reassigning costs notably more” (the situation function in the example program mes_sim.py, six classes).</li>
+    </ul>
+    <p>In short, the <b>classification rule</b> is fixed in advance, and the <b>value</b> of the situation is computed at every step from the current state. Real MES records usually also contain an outcome column (for example, fixed: whether the fault was fixed first time); it can be used to estimate environment parameters such as fix rates and costs, but it is not used directly as a reward to train θ.</p>
+  </div></details>
+  <details><summary><b>Q10</b>Methodologically, can the algorithm use the current raw state instead of a situation classification?</summary><div class="ans">
+    <p>Yes, depending on how large the raw state is. The method itself does not require a classification; classifying is a simplification that makes tabular computation possible. Any state s works as long as the following three quantities can be computed:</p>
+    <ol>
+      <li>The expected features and their covariance for every (s, a): the mean-variance Q needs E[R] = θᵀφ(s,a) and Var[R] = θᵀΣ(s,a)θ.</li>
+      <li>The continuation value γE[V(s′)]: this needs the transition probabilities P(s′ | s, a).</li>
+      <li>One solution of the mean-variance Q per candidate β: 64 solutions per E-step.</li>
+    </ol>
+    <div class="scroll"><table><tr><th class="l">Case</th><th class="l">Approach</th><th class="l">Cost and limitations</th></tr>
+    <tr><td class="l" style="white-space:normal;min-width:10em">Discrete and not too large (e.g. number of faults × whether each engineer is idle × skill level)</td><td class="l" style="white-space:normal;min-width:14em">Use it directly as s; the program does not change, only the tables grow. The Bellman operator is a contraction on any finite state space.</td><td class="l" style="white-space:normal;min-width:16em">Each (s, a) needs enough records; in the example program, cells with fewer than 5 records fall back to the overall mean of the same action.</td></tr>
+    <tr><td class="l" style="white-space:normal">Very large or continuous</td><td class="l" style="white-space:normal">Represent Q_β(s, a; θ) with function approximation and solve it by approximate value iteration.</td><td class="l" style="white-space:normal">In the dispatch simulation, the positions of 20 engineers alone give 13²⁰ ≈ 10²² combinations. The paper's convergence theorem assumes that Q and the gradients are computed exactly; the effect of approximation error is not covered by the paper and has not been tested.</td></tr>
+    <tr><td class="l" style="white-space:normal">Compromise (most common in practice)</td><td class="l" style="white-space:normal">Put the actual cost of each record directly into φ, and use a coarser classification only for the state that determines γE[V(s′)].</td><td class="l" style="white-space:normal">One must still check that the classification does not drop information that dispatchers really use.</td></tr></table></div>
+    <ul>
+      <li><b>Too coarse, and information loss is mistaken for risk attitude.</b> Differences within a class that the model cannot see partly inflate Σ(s,a) and hence Var[R], and partly appear as different choices in the same situation; both can be explained away as differences in β.</li>
+      <li><b>Too fine, and the estimates become unstable.</b> With too few records per cell, fix rates and transition probabilities are poorly estimated, and θ and β become unstable as well.</li>
+      <li><b>β is identified only from certain states.</b> Only states in which the two actions differ in variance carry information about β (Q4), so the classification should keep the variables that affect outcome variance.</li>
+    </ul>
+    <p>Suggested practice: first run Phase A and Phase B with a situation classification; then add, one by one, the variables that dispatchers actually look at; whenever the state definition changes, compare held-out log-likelihood (holding out some shifts from training), and switch to the finer version only if it predicts better.</p>
+  </div></details>
+</section>
+
+<footer>
+  <div>This page is an interactive companion to the paper by Kao-Shing Hwang and Jin-Ling Lin on risk-sensitive inverse reinforcement learning from identity-unlabeled demonstrations (under review). The model is a teaching-scale version with three situations, two actions and two features; the computations follow the paper's method, except that the M-step derivative is written in closed form here (the paper's implementation uses central finite differences). It is a teaching illustration, not the code that reproduces the paper's experiments.</div>
+  <div>URL: <a href="https://stsp-data.com/ai-design/Risk-Sensitive-IRL/index_en.html">https://stsp-data.com/ai-design/Risk-Sensitive-IRL/index_en.html</a>　|　<a href="index.html" lang="zh-Hant">中文版</a></div>
+</footer>
+</div>
+<script src="assets/em-core.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
