@@ -14,7 +14,7 @@ Each demonstration trajectory has a latent risk coefficient β under an immediat
 | `experiments/` | Final-protocol runner and all scripts for the revision experiments (see the table below). |
 | `results/` | Raw per-run results (JSON Lines) and text summaries used in the manuscript. |
 | `dispatch_irl/` | A separate teaching example on production-line dispatching (simulated data; README in Chinese). It is not used for any result in the manuscript. |
-| `interactive_demo/` | Static web page that steps through the E-step and M-step on a three-situation teaching model; also hosted at https://stsp-data.com/ai-design/Risk-Sensitive-IRL/index_en.html. |
+| `interactive_demo/` | Illustrative website describing the application of the proposed method to a simple dispatching task (E-step and M-step on a three-situation teaching model); also hosted at https://stsp-data.com/ai-design/Risk-Sensitive-IRL/en/. |
 
 ## Installation
 
