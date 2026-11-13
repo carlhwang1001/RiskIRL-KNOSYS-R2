@@ -7,4 +7,7 @@ authors:
   - family-names: Lin
     given-names: Jin-Ling
 type: software
+version: "1.0"
+doi: 10.5281/zenodo.24182602
+repository-code: "https://github.com/carlhwang1001/RiskIRL-KNOSYS-R2"
 license: MIT

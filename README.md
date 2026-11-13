@@ -1,5 +1,7 @@
 # Immediate-Risk Inverse Reinforcement Learning from Identity-Unlabeled Heterogeneous Demonstrations
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24182602.svg)](https://doi.org/10.5281/zenodo.24182602)
+
 Code and results for the manuscript by Kao-Shing Hwang and Jin-Ling Lin (Knowledge-Based Systems, manuscript KNOSYS-D-26-17431, under review).
 
 Each demonstration trajectory has a latent risk coefficient β under an immediate-risk mean–variance action value; a shared linear reward θ and the posterior over every β are fitted by variational EM with a deterministic log-scale quadrature E-step (K = 64 nodes on [0.02, 10], LogNormal(0, 0.75²) prior) and a finite-difference M-step.
@@ -53,6 +55,10 @@ The two runner scripts accept `<worker_id> <n_workers> <output>` so that the job
 ## Scope
 
 The model penalizes only the conditional variance of the one-step reward; it does not represent return-variance, CVaR or distributional risk (Proposition 1). All experiments are tabular and use simulated demonstrations.
+
+## Citing this code
+
+Please cite the archived release: Kao-Shing Hwang and Jin-Ling Lin, *Immediate-Risk Inverse Reinforcement Learning from Identity-Unlabeled Heterogeneous Demonstrations: code and results* (v1.0), Zenodo, https://doi.org/10.5281/zenodo.24182602. The accompanying article is under review; its reference will be added here after publication.
 
 ## Licence
 
